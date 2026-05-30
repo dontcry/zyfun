@@ -20,7 +20,7 @@
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Renderer Process                                    │
-│  new VlcPlayer() → IVlcRuntime + CanvasRenderer   │
+│  new VlcPlayer() → IVlcRuntime                    │
 │       ↓ IPC Bridge (ipcRenderer.invoke)              │
 ├─────────────────────────────────────────────────────┤
 │  Main Process                                        │
@@ -100,7 +100,7 @@ interface IVlcInitOptions {
   el: string; // 挂载容器 CSS 选择器
   url: string; // 播放地址（本地路径或在线 URL）
   headers?: Record<string, string>; // 在线资源请求头
-  log?: boolean; // 是否输出 Rust 层 [vlc-native] 日志，默认 false
+  debug?: boolean; // 是否输出 Rust 层 [vlc-native] 日志，默认 false
   seekStep?: number; // 快进/快退步进（毫秒），默认 5000
   volumeStep?: number; // 音量步进，默认 0.05
   autoplay?: boolean; // 是否自动播放，默认 true
@@ -272,7 +272,6 @@ import '@zy/vlc/renderer.css';
 ```typescript
 class VlcPlayer implements IVlcRuntime {
   constructor(path: IVlcInitPath, options: IVlcInitOptions);
-  player: IVlcPlayer;
   adapter: VlcAdapter;
   destroy(): void;
 }
@@ -286,8 +285,7 @@ class VlcPlayer implements IVlcRuntime {
 **实例结构：** `IVlcRuntime`
 
 ```typescript
-interface IVlcRuntime {
-  player: IVlcPlayer;
+interface IVlcRuntime extends IVlcPlayer {
   adapter: VlcAdapter;
   destroy: () => void;
 }
@@ -319,9 +317,9 @@ runtime.destroy();
 
 ---
 
-### IVlcPlayer 对象
+### IVlcRuntime 对象
 
-由 `new VlcPlayer()` 创建在 `runtime.player` 上的播放器对象，基于 mixin 模式组合了播放控制、UI 模板和事件系统。
+由 `new VlcPlayer()` 直接创建的播放器对象，基于 mixin 模式组合了播放控制、UI 模板和事件系统，并额外提供 `destroy()`。
 
 #### 状态属性
 

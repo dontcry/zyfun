@@ -9,9 +9,7 @@ import { createCanvasRenderer } from './canvas-renderer';
 const UI_HIDE_DELAY = 2200;
 const DEFAULT_PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-export interface IVlcRuntime {
-  player: IVlcPlayer;
-  adapter: IVlcPlayer['adapter'];
+export interface IVlcRuntime extends IVlcPlayer {
   destroy: () => void;
 }
 
@@ -58,6 +56,7 @@ function createVlcRuntime(path: IVlcInitPath, options: IVlcInitOptions): IVlcRun
     el: options.el,
     url: options.url,
     headers: options.headers,
+    debug: options.debug,
     startTime: options.startTime,
     autoplay: options.autoplay,
     volume: options.volume,
@@ -811,10 +810,8 @@ function createVlcRuntime(path: IVlcInitPath, options: IVlcInitOptions): IVlcRun
 
   init();
 
-  return {
-    player,
-    adapter,
-    destroy: () => {
+  Object.defineProperty(player, 'destroy', {
+    value: () => {
       canvasRenderer.destroy();
       stopUiHideTimer();
       player.pip = false;
@@ -825,23 +822,17 @@ function createVlcRuntime(path: IVlcInitPath, options: IVlcInitOptions): IVlcRun
       cleanupBag.runAll();
       template.destroy(true);
     },
-  };
+  });
+
+  return player as IVlcRuntime;
 }
 
-export class VlcPlayer implements IVlcRuntime {
-  player: IVlcPlayer;
-  adapter: IVlcPlayer['adapter'];
-
-  private readonly teardown: () => void;
-
+class VlcPlayerRuntime {
   constructor(path: IVlcInitPath, options: IVlcInitOptions) {
-    const runtime = createVlcRuntime(path, options);
-    this.player = runtime.player;
-    this.adapter = runtime.adapter;
-    this.teardown = runtime.destroy;
-  }
-
-  destroy(): void {
-    this.teardown();
+    return createVlcRuntime(path, options);
   }
 }
+
+export const VlcPlayer = VlcPlayerRuntime as unknown as {
+  new (path: IVlcInitPath, options: IVlcInitOptions): IVlcRuntime;
+};

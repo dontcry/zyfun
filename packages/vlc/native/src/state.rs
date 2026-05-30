@@ -36,7 +36,7 @@ pub struct VlcAddonState {
 
   pub event_callbacks: HashMap<String, VlcEventTsfn>,
   pub attached_events: Vec<LibvlcEventType>,
-  pub log_enabled: bool,
+  pub debug_enabled: bool,
 
   pub volume: f64,
   pub muted: bool,
@@ -72,7 +72,7 @@ impl VlcAddonState {
 
       event_callbacks: HashMap::new(),
       attached_events: Vec::new(),
-      log_enabled: false,
+      debug_enabled: false,
 
       volume: 0.5,
       muted: false,
@@ -143,7 +143,7 @@ impl VlcAddonState {
     self.frame_in_use = false;
     self.frame_dirty = false;
     self.latest_buffering_percent = 0.0;
-    self.log_enabled = false;
+    self.debug_enabled = false;
     self.volume = 0.5;
     self.muted = false;
     self.pending_start_progress = None;

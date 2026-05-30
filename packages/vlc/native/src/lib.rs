@@ -202,7 +202,7 @@ fn load_media(instance_id: &str, options: CreateOptions) -> NapiResult<()> {
     playback_rate,
     autoplay,
     start_time,
-    log,
+    debug,
     ..
   } = options;
 
@@ -220,7 +220,7 @@ fn load_media(instance_id: &str, options: CreateOptions) -> NapiResult<()> {
     let state = instances
       .get_mut(instance_id)
       .ok_or_else(|| to_napi_error(format!("instance not found: {instance_id}")))?;
-    state.log_enabled = log.unwrap_or(false);
+    state.debug_enabled = debug.unwrap_or(false);
     let api_ptr = state.api()? as *const LibVlcApi;
     let index = state.index;
     let (vlc_instance, old_player) = {

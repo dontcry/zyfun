@@ -12,6 +12,7 @@ players.push(
   new VlcPlayer(vlcPath, {
     el: '#app-1',
     url: 'https://sf1-cdn-tos.huoshanstatic.com/obj/media-fe/xgplayer_doc_video/mp4/xgplayer-demo-360p.mp4',
+    // debug: true,
   }),
 );
 
