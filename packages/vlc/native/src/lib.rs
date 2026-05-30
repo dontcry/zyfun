@@ -3,6 +3,7 @@
 mod api;
 mod event;
 mod ffi;
+mod log;
 mod platform;
 mod state;
 mod types;
@@ -93,6 +94,10 @@ unsafe extern "C" fn video_unlock_callback(
 }
 
 unsafe extern "C" fn video_display_callback(_opaque: *mut c_void, _picture: *mut c_void) {}
+
+fn resolve_instance_id(id: Option<String>) -> String {
+  id.unwrap_or_else(default_instance_id)
+}
 
 fn load_dylib(instance_id: &str, lib_path: String, plugin_path: Option<String>) -> NapiResult<()> {
   let mut instances = lock_instances()?;
@@ -393,130 +398,20 @@ fn load_media(instance_id: &str, options: CreateOptions) -> NapiResult<()> {
   }
 
   if let Some(volume) = volume {
-    set_volume_internal(instance_id, volume)?;
+    set_volume(volume, Some(instance_id.to_string()))?;
   }
 
   if let Some(rate) = playback_rate {
-    set_playback_rate_internal(instance_id, rate)?;
+    set_playback_rate(rate, Some(instance_id.to_string()))?;
   }
 
   if autoplay.unwrap_or(false) {
     return Ok(());
   }
 
-  pause_internal(instance_id)?;
+  pause(Some(instance_id.to_string()))?;
   if let Some(start_time) = start_time {
-    seek_internal(instance_id, start_time)?;
-  }
-
-  Ok(())
-}
-
-// --- Internal helpers (take &str instance_id, used by load_media) ---
-
-fn resolve_instance_id(id: Option<String>) -> String {
-  id.unwrap_or_else(default_instance_id)
-}
-
-fn set_volume_internal(instance_id: &str, volume: f64) -> NapiResult<()> {
-  let mut instances = lock_instances()?;
-  let state = instances
-    .get_mut(instance_id)
-    .ok_or_else(|| to_napi_error(format!("instance not found: {instance_id}")))?;
-  let api = state.api()?;
-  let context = state.context()?;
-
-  if context.player.is_null() {
-    return Ok(());
-  }
-
-  if !volume.is_finite() {
-    return Ok(());
-  }
-
-  let raw_volume = volume.clamp(0.0, 1.0);
-  let vlc_volume = (raw_volume.powi(3) * 200.0).round() as i32;
-
-  let raw = unsafe { (api.libvlc_audio_set_volume)(context.player, vlc_volume) };
-  if raw < 0 {
-    return Ok(());
-  }
-
-  state.muted = raw_volume == 0.0;
-  state.volume = raw_volume;
-
-  Ok(())
-}
-
-fn pause_internal(instance_id: &str) -> NapiResult<()> {
-  let instances = lock_instances()?;
-  let state = instances
-    .get(instance_id)
-    .ok_or_else(|| to_napi_error(format!("instance not found: {instance_id}")))?;
-  let api = state.api()?;
-  let context = state.context()?;
-
-  if context.player.is_null() {
-    return Ok(());
-  }
-
-  let raw_state = unsafe { (api.libvlc_media_player_get_state)(context.player) };
-  if matches!(state_from_raw(raw_state), VlcPlayerState::Playing) {
-    unsafe {
-      (api.libvlc_media_player_set_pause)(context.player, 1);
-    }
-  }
-
-  Ok(())
-}
-
-fn set_playback_rate_internal(instance_id: &str, rate: f64) -> NapiResult<()> {
-  let instances = lock_instances()?;
-  let state = instances
-    .get(instance_id)
-    .ok_or_else(|| to_napi_error(format!("instance not found: {instance_id}")))?;
-  let api = state.api()?;
-  let context = state.context()?;
-
-  if context.player.is_null() {
-    return Ok(());
-  }
-
-  if !rate.is_finite() {
-    return Ok(());
-  }
-
-  let rate = rate.clamp(0.1, 8.0);
-  let raw = unsafe { (api.libvlc_media_player_set_rate)(context.player, rate as c_float) };
-  if raw < 0 {
-    return Ok(());
-  }
-
-  Ok(())
-}
-
-fn seek_internal(instance_id: &str, time: i64) -> NapiResult<()> {
-  let instances = lock_instances()?;
-  let state = instances
-    .get(instance_id)
-    .ok_or_else(|| to_napi_error(format!("instance not found: {instance_id}")))?;
-  let api = state.api()?;
-  let context = state.context()?;
-
-  if context.player.is_null() {
-    return Ok(());
-  }
-
-  let duration = unsafe { (api.libvlc_media_player_get_length)(context.player) };
-
-  let target = if duration > 0 {
-    (time as c_longlong).clamp(0, duration)
-  } else {
-    (time as c_longlong).max(0)
-  };
-
-  unsafe {
-    (api.libvlc_media_player_set_time)(context.player, target);
+    seek(start_time, Some(instance_id.to_string()))?;
   }
 
   Ok(())
@@ -842,106 +737,103 @@ pub fn create(
 #[napi]
 pub fn play(instance_id: Option<String>) -> NapiResult<()> {
   let id = resolve_instance_id(instance_id);
-  let (api_ptr, player, action, muted, volume) = {
-    let mut instances = lock_instances()?;
-    let state = instances
-      .get_mut(&id)
-      .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
-    let pending_progress = state.pending_start_progress.take();
-    let muted = state.muted;
-    let volume = state.volume;
-    let api = state.api()?;
-    let context = state.context()?;
+  let mut instances = lock_instances()?;
+  let state = instances
+    .get_mut(&id)
+    .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
+  let pending_progress = state.pending_start_progress.take();
+  let muted = state.muted;
+  let volume = state.volume;
+  let api = state.api()?;
+  let context = state.context()?;
 
-    if context.player.is_null() {
-      return Ok(());
+  if context.player.is_null() {
+    return Ok(());
+  }
+
+  let raw_state = unsafe { (api.libvlc_media_player_get_state)(context.player) };
+  let player_state = state_from_raw(raw_state);
+  let action = if matches!(player_state, VlcPlayerState::Paused) {
+    PlaybackAction::Resume
+  } else if matches!(player_state, VlcPlayerState::Ended)
+    || matches!(player_state, VlcPlayerState::Stopped) && is_at_end(api, context.player)
+  {
+    PlaybackAction::Restart(pending_progress.unwrap_or(0.0))
+  } else if matches!(player_state, VlcPlayerState::Stopped) {
+    match pending_progress {
+      Some(progress) => PlaybackAction::Restart(progress),
+      None => PlaybackAction::Start,
     }
-
-    let raw_state = unsafe { (api.libvlc_media_player_get_state)(context.player) };
-    let player_state = state_from_raw(raw_state);
-    let action = if matches!(player_state, VlcPlayerState::Paused) {
-      PlaybackAction::Resume
-    } else if matches!(player_state, VlcPlayerState::Ended)
-      || matches!(player_state, VlcPlayerState::Stopped) && is_at_end(api, context.player)
-    {
-      PlaybackAction::Restart(pending_progress.unwrap_or(0.0))
-    } else if matches!(player_state, VlcPlayerState::Stopped) {
-      match pending_progress {
-        Some(progress) => PlaybackAction::Restart(progress),
-        None => PlaybackAction::Start,
-      }
-    } else {
-      PlaybackAction::None
-    };
-
-    (
-      api as *const LibVlcApi,
-      context.player,
-      action,
-      muted,
-      volume,
-    )
+  } else {
+    PlaybackAction::None
   };
 
-  let api = unsafe { &*api_ptr };
-  run_playback_action(api, player, action, muted, volume);
+  run_playback_action(api, context.player, action, muted, volume);
 
   Ok(())
 }
 
 #[napi]
 pub fn pause(instance_id: Option<String>) -> NapiResult<()> {
-  pause_internal(&resolve_instance_id(instance_id))
+  let id = resolve_instance_id(instance_id);
+  let instances = lock_instances()?;
+  let state = instances
+    .get(&id)
+    .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
+  let api = state.api()?;
+  let context = state.context()?;
+
+  if context.player.is_null() {
+    return Ok(());
+  }
+
+  let raw_state = unsafe { (api.libvlc_media_player_get_state)(context.player) };
+  if matches!(state_from_raw(raw_state), VlcPlayerState::Playing) {
+    unsafe {
+      (api.libvlc_media_player_set_pause)(context.player, 1);
+    }
+  }
+
+  Ok(())
 }
 
 #[napi]
 pub fn toggle(instance_id: Option<String>) -> NapiResult<()> {
   let id = resolve_instance_id(instance_id);
-  let (api_ptr, player, action, muted, volume) = {
-    let mut instances = lock_instances()?;
-    let state = instances
-      .get_mut(&id)
-      .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
-    let pending_progress = state.pending_start_progress.take();
-    let muted = state.muted;
-    let volume = state.volume;
-    let api = state.api()?;
-    let context = state.context()?;
+  let mut instances = lock_instances()?;
+  let state = instances
+    .get_mut(&id)
+    .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
+  let pending_progress = state.pending_start_progress.take();
+  let muted = state.muted;
+  let volume = state.volume;
+  let api = state.api()?;
+  let context = state.context()?;
 
-    if context.player.is_null() {
-      return Ok(());
+  if context.player.is_null() {
+    return Ok(());
+  }
+
+  let raw_state = unsafe { (api.libvlc_media_player_get_state)(context.player) };
+  let player_state = state_from_raw(raw_state);
+  let action = if matches!(player_state, VlcPlayerState::Playing) {
+    PlaybackAction::Pause
+  } else if matches!(player_state, VlcPlayerState::Paused) {
+    PlaybackAction::Resume
+  } else if matches!(player_state, VlcPlayerState::Ended)
+    || matches!(player_state, VlcPlayerState::Stopped) && is_at_end(api, context.player)
+  {
+    PlaybackAction::Restart(pending_progress.unwrap_or(0.0))
+  } else if matches!(player_state, VlcPlayerState::Stopped) {
+    match pending_progress {
+      Some(progress) => PlaybackAction::Restart(progress),
+      None => PlaybackAction::Start,
     }
-
-    let raw_state = unsafe { (api.libvlc_media_player_get_state)(context.player) };
-    let player_state = state_from_raw(raw_state);
-    let action = if matches!(player_state, VlcPlayerState::Playing) {
-      PlaybackAction::Pause
-    } else if matches!(player_state, VlcPlayerState::Paused) {
-      PlaybackAction::Resume
-    } else if matches!(player_state, VlcPlayerState::Ended)
-      || matches!(player_state, VlcPlayerState::Stopped) && is_at_end(api, context.player)
-    {
-      PlaybackAction::Restart(pending_progress.unwrap_or(0.0))
-    } else if matches!(player_state, VlcPlayerState::Stopped) {
-      match pending_progress {
-        Some(progress) => PlaybackAction::Restart(progress),
-        None => PlaybackAction::Start,
-      }
-    } else {
-      PlaybackAction::None
-    };
-
-    (
-      api as *const LibVlcApi,
-      context.player,
-      action,
-      muted,
-      volume,
-    )
+  } else {
+    PlaybackAction::None
   };
 
-  let api = unsafe { &*api_ptr };
-  run_playback_action(api, player, action, muted, volume);
+  run_playback_action(api, context.player, action, muted, volume);
 
   Ok(())
 }
@@ -969,7 +861,34 @@ pub fn stop(instance_id: Option<String>) -> NapiResult<()> {
 
 #[napi]
 pub fn set_volume(volume: f64, instance_id: Option<String>) -> NapiResult<()> {
-  set_volume_internal(&resolve_instance_id(instance_id), volume)
+  let id = resolve_instance_id(instance_id);
+  let mut instances = lock_instances()?;
+  let state = instances
+    .get_mut(&id)
+    .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
+  let api = state.api()?;
+  let context = state.context()?;
+
+  if context.player.is_null() {
+    return Ok(());
+  }
+
+  if !volume.is_finite() {
+    return Ok(());
+  }
+
+  let raw_volume = volume.clamp(0.0, 1.0);
+  let vlc_volume = (raw_volume.powi(3) * 200.0).round() as i32;
+
+  let raw = unsafe { (api.libvlc_audio_set_volume)(context.player, vlc_volume) };
+  if raw < 0 {
+    return Ok(());
+  }
+
+  state.muted = raw_volume == 0.0;
+  state.volume = raw_volume;
+
+  Ok(())
 }
 
 #[napi]
@@ -1034,7 +953,31 @@ pub fn get_muted(instance_id: Option<String>) -> NapiResult<bool> {
 
 #[napi]
 pub fn seek(time: i64, instance_id: Option<String>) -> NapiResult<()> {
-  seek_internal(&resolve_instance_id(instance_id), time)
+  let id = resolve_instance_id(instance_id);
+  let instances = lock_instances()?;
+  let state = instances
+    .get(&id)
+    .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
+  let api = state.api()?;
+  let context = state.context()?;
+
+  if context.player.is_null() {
+    return Ok(());
+  }
+
+  let duration = unsafe { (api.libvlc_media_player_get_length)(context.player) };
+
+  let target = if duration > 0 {
+    (time as c_longlong).clamp(0, duration)
+  } else {
+    (time as c_longlong).max(0)
+  };
+
+  unsafe {
+    (api.libvlc_media_player_set_time)(context.player, target);
+  }
+
+  Ok(())
 }
 
 #[napi]
@@ -1202,7 +1145,29 @@ pub fn get_playback_rate(instance_id: Option<String>) -> NapiResult<f64> {
 
 #[napi]
 pub fn set_playback_rate(rate: f64, instance_id: Option<String>) -> NapiResult<()> {
-  set_playback_rate_internal(&resolve_instance_id(instance_id), rate)
+  let id = resolve_instance_id(instance_id);
+  let instances = lock_instances()?;
+  let state = instances
+    .get(&id)
+    .ok_or_else(|| to_napi_error(format!("instance not found: {id}")))?;
+  let api = state.api()?;
+  let context = state.context()?;
+
+  if context.player.is_null() {
+    return Ok(());
+  }
+
+  if !rate.is_finite() {
+    return Ok(());
+  }
+
+  let rate = rate.clamp(0.1, 8.0);
+  let raw = unsafe { (api.libvlc_media_player_set_rate)(context.player, rate as c_float) };
+  if raw < 0 {
+    return Ok(());
+  }
+
+  Ok(())
 }
 
 #[napi]
