@@ -100,7 +100,8 @@ export const adapter = async (uuid: string, force: boolean = false): Promise<ICm
   const type = source.type;
 
   if (isNil(type) || !isPositiveFiniteNumber(type) || !Object.hasOwn(CMS_ADAPTER_MAP, type)) {
-    throw new Error('Db data type error');
+    logger.error(`[adapter] unsupported site type: uuid=${uuid}, type=${type}, api=${source.api}, name=${source.name}`);
+    throw new Error(`Db data type error: unsupported type ${type} for api ${source.api}`);
   }
 
   // Limit: unable to detect network data changes

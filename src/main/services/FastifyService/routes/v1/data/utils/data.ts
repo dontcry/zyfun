@@ -59,6 +59,10 @@ const catvodToStandard = (config: Catvod, baseUrl: string): Partial<IDbStore> =>
 const tvboxToStandard = (config: Tvbox, baseUrl: string, type: string): Partial<IDbStore> => {
   const data: Partial<IDbStore> = {};
 
+  logger.info(
+    `[tvboxToStandard] start conversion, type=${type}, baseUrl=${baseUrl}, sitesCount=${config.sites?.length ?? 0}, livesCount=${config.lives?.length ?? 0}, parsesCount=${config.parses?.length ?? 0}`,
+  );
+
   if (Object.hasOwn(config, 'sites') && isArray(config.sites) && !isArrayEmpty(config.sites)) {
     const formatSiteType = (selectType: string, sourceType: number, api: string): number => {
       if (selectType === 'drpy') return 2;
@@ -116,23 +120,35 @@ const tvboxToStandard = (config: Tvbox, baseUrl: string, type: string): Partial<
       return relativeUrl;
     };
 
+    logger.info(`[tvboxToStandard] filtering ${config.sites.length} sites, type=${type}`);
+
     data.site = config.sites
-      .filter(
-        (item) =>
+      .filter((item) => {
+        const keep =
           [0, 1, 4].includes(item.type) ||
           (item.type === 3 &&
             (['csp_XBPQ', 'csp_XYQHiker'].includes(type) ||
-              // ['csp_XBPQ', 'csp_XYQHiker', 'csp_AppGet', 'csp_AppQi', 'csp_AppFox'].includes(type) ||
+              item.api.startsWith('csp_') ||
               item.api.endsWith('.js') ||
-              item.api.endsWith('.py'))),
-      )
+              item.api.endsWith('.py')));
+        if (!keep) {
+          logger.info(
+            `[tvboxToStandard] filtered out site: key=${item.key}, name=${item.name}, type=${item.type}, api=${item.api}`,
+          );
+        }
+        return keep;
+      })
       .map((item) => {
         const uuid = randomUUID();
+        const siteType = formatSiteType(type, item.type, item.api);
+        logger.info(
+          `[tvboxToStandard] converted site: key=${item.key}, name=${item.name}, sourceType=${item.type}, targetType=${siteType}, api=${item.api}`,
+        );
         return {
           id: uuid,
           key: item.key ?? uuid,
           name: item.name,
-          type: formatSiteType(type, item.type, item.api),
+          type: siteType,
           api: formatUrl(item.api, baseUrl),
           playUrl: '',
           group: formatSiteGroup(type),
@@ -144,10 +160,21 @@ const tvboxToStandard = (config: Tvbox, baseUrl: string, type: string): Partial<
           updatedAt: Date.now(),
         };
       })
-      .filter((item) => item.api || item.ext);
+      .filter((item) => {
+        const keep = item.api || item.ext;
+        if (!keep) {
+          logger.info(
+            `[tvboxToStandard] filtered out converted site: key=${item.key}, name=${item.name}, no api or ext`,
+          );
+        }
+        return keep;
+      });
+
+    logger.info(`[tvboxToStandard] sites result: input=${config.sites.length}, output=${data.site?.length ?? 0}`);
   }
 
   if (Object.hasOwn(config, 'lives') && isArray(config.lives) && !isArrayEmpty(config.lives)) {
+    logger.info(`[tvboxToStandard] processing ${config.lives.length} lives`);
     // [
     //   {
     //     name: 'yingshi',
@@ -276,9 +303,11 @@ const tvboxToStandard = (config: Tvbox, baseUrl: string, type: string): Partial<
     }
 
     data.iptv = iptv;
+    logger.info(`[tvboxToStandard] lives result: iptvCount=${iptv.length}, channelCount=${channel.length}`);
   }
 
   if (Object.hasOwn(config, 'parses') && isArray(config.parses) && !isArrayEmpty(config.parses)) {
+    logger.info(`[tvboxToStandard] processing ${config.parses.length} parses`);
     const formatSiteType = (type: number = 0): number => {
       switch (type) {
         case 1:
@@ -307,8 +336,13 @@ const tvboxToStandard = (config: Tvbox, baseUrl: string, type: string): Partial<
           updatedAt: Date.now(),
         };
       });
+
+    logger.info(`[tvboxToStandard] parses result: input=${config.parses.length}, output=${data.analyze?.length ?? 0}`);
   }
 
+  logger.info(
+    `[tvboxToStandard] final result: siteCount=${data.site?.length ?? 0}, iptvCount=${data.iptv?.length ?? 0}, analyzeCount=${data.analyze?.length ?? 0}`,
+  );
   return data;
 };
 

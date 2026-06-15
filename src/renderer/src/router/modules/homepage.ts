@@ -61,6 +61,19 @@ export default [
         component: () => import('@/pages/moment/index.vue'),
       },
       {
+        path: 'demo',
+        name: 'Demo',
+        meta: {
+          title: {
+            'zh-CN': '演示',
+            'zh-TW': '演示',
+            'en-US': 'Demo',
+          },
+          icon: 'fill-color-1',
+        },
+        component: () => import('@/pages/demo/index.vue'),
+      },
+      {
         path: 'test',
         name: 'Test',
         meta: {

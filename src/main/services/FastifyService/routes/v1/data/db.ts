@@ -125,11 +125,16 @@ const api: FastifyPluginAsync = async (fastify): Promise<void> => {
           putType: IDataPutType;
           remoteType: IDataSimpleType;
         };
+        fastify.log.info(`[import/simple] start import, api=${api}, putType=${putType}, remoteType=${remoteType}`);
         const method = putType === DATA_PUT_TYPE.ADDITIONAL ? 'add' : 'set';
 
         const data = await convertSimpleToStandard(api, remoteType);
+        fastify.log.info(
+          `[import/simple] converted data: keys=${Object.keys(data).join(',')}, siteCount=${data.site?.length ?? 0}, iptvCount=${data.iptv?.length ?? 0}, analyzeCount=${data.analyze?.length ?? 0}`,
+        );
         if (putType === DATA_PUT_TYPE.ADDITIONAL) delete data.setting;
         if (isObjectEmpty(data) || Object.keys(data).every((k) => isArrayEmpty(data[k]))) {
+          fastify.log.warn(`[import/simple] no valid data to import`);
           return reply
             .code(200)
             .send({ code: 0, msg: 'ok', data: { success: false, message: 'No valid data to import' } });
@@ -137,6 +142,9 @@ const api: FastifyPluginAsync = async (fastify): Promise<void> => {
 
         const ops = (Object.keys(data) as ITableName[]).map((t) => dbService[t][method](data[t] as any));
         const res = await Promise.allSettled(ops);
+        fastify.log.info(
+          `[import/simple] db operations: ${res.map((r, i) => `${Object.keys(data)[i]}=${r.status}`).join(', ')}`,
+        );
 
         const ststus = res.filter((r) => r.status === 'rejected').length === 0;
         if (!ststus) {
